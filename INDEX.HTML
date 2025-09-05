@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BanaMoto - لوحة التحكم</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, sans-serif;
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+        }
+        .trip-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        .trip-info {
+            margin: 10px 0;
+            font-size: 18px;
+        }
+        #map {
+            width: 100%;
+            height: 300px;
+            border-radius: 12px;
+            margin-bottom: 15px;
+        }
+        .driver-toggle {
+            padding: 10px 18px;
+            border: none;
+            border-radius: 12px;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 16px;
+            transition: 0.3s;
+            margin-top: 10px;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-left: 8px;
+        }
+        .status-online {
+            background-color: #00b894;
+        }
+        .status-offline {
+            background-color: #d63031;
+        }
+    </style>
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+    <!-- Leaflet for map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+</head>
+<body>
+    <h1>BanaMoto - لوحة التحكم</h1>
+
+    <div id="tripContainer" class="trip-card">
+        <h2 id="driverName">-</h2>
+        <div class="trip-info">المسافة: <span id="distance">0.0</span> كم</div>
+        <div class="trip-info">المدة: <span id="duration">0</span> د</div>
+        <div class="trip-info">السعر: <span id="price">0.00</span> د.ت</div>
+        <div id="map"></div>
+        <div>
+            <span>حالة السائق: </span>
+            <span id="statusText">غير متصل</span>
+            <span id="statusIndicator" class="status-indicator status-offline"></span>
+        </div>
+        <button id="driverToggleBtn" class="driver-toggle">تشغيل</button>
+    </div>
+
+    <script>
+        // ====== FIREBASE CONFIGURATION ======
+        const firebaseConfig = {
+          apiKey: "AIzaSyBTvvV2O8DvBTtNp3_jPzBDbcrGsraGsMg",
+          authDomain: "motoro-2105a.firebaseapp.com",
+          databaseURL: "https://motoro-2105a-default-rtdb.firebaseio.com",
+          projectId: "motoro-2105a",
+          storageBucket: "motoro-2105a.firebasestorage.app",
+          messagingSenderId: "202197581399",
+          appId: "1:202197581399:web:3477217e7e930267c6ad12",
+          measurementId: "G-S5CQ5TV2XY"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        // Elements
+        const driverNameEl = document.getElementById("driverName");
+        const distanceEl = document.getElementById("distance");
+        const durationEl = document.getElementById("duration");
+        const priceEl = document.getElementById("price");
+        const driverToggleBtn = document.getElementById("driverToggleBtn");
+        const statusText = document.getElementById("statusText");
+        const statusIndicator = document.getElementById("statusIndicator");
+
+        // Initialize Leaflet map
+        const map = L.map('map').setView([36.8, 10.2], 12); // Centered on Tunis
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+        let marker = null;
+
+        const driverId = "driver1"; // Change this ID per driver
+        const driverRef = database.ref("activeTrips/" + driverId);
+        const driverStatusRef = database.ref("drivers/" + driverId + "/driverActive");
+        const driverAvailabilityRef = database.ref("drivers/" + driverId + "/isAvailable");
+
+        // Update UI when driver data changes
+        driverRef.on("value", (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+                driverNameEl.textContent = data.driverName || "-";
+                distanceEl.textContent = data.totalDistance || "0.0";
+                durationEl.textContent = data.duration || "0";
+                priceEl.textContent = data.price || "0.00";
+
+                // Update map
+                if (data.lat && data.lng) {
+                    const latLng = [data.lat, data.lng];
+                    if (!marker) {
+                        marker = L.marker(latLng).addTo(map);
+                        map.setView(latLng, 15);
+                    } else {
+                        marker.setLatLng(latLng);
+                    }
+                }
+            } else {
+                // Trip ended
+                driverNameEl.textContent = "-";
+                distanceEl.textContent = "0.0";
+                durationEl.textContent = "0";
+                priceEl.textContent = "0.00";
+                if (marker) {
+                    map.removeLayer(marker);
+                    marker = null;
+                }
+            }
+        });
+
+        // Listen for driverActive changes to update button
+        driverStatusRef.on("value", snapshot => {
+            const active = snapshot.val();
+            updateDriverStatusUI(active);
+        });
+
+        // Function to update UI based on driver status
+        function updateDriverStatusUI(isActive) {
+            if (isActive) {
+                driverToggleBtn.textContent = "إيقاف";
+                driverToggleBtn.style.background = "#d63031";
+                statusText.textContent = "متصل";
+                statusIndicator.className = "status-indicator status-online";
+            } else {
+                driverToggleBtn.textContent = "تشغيل";
+                driverToggleBtn.style.background = "#00b894";
+                statusText.textContent = "غير متصل";
+                statusIndicator.className = "status-indicator status-offline";
+            }
+        }
+
+        // Toggle driverActive on button click
+        driverToggleBtn.addEventListener("click", () => {
+            driverStatusRef.once("value").then(snapshot => {
+                const currentStatus = snapshot.val();
+                const newStatus = !currentStatus;
+                
+                // Update both driverActive and isAvailable status
+                driverStatusRef.set(newStatus);
+                driverAvailabilityRef.set(newStatus);
+                
+                // Show confirmation message
+                if (newStatus) {
+                    alert("تم تشغيل التطبيق، السائق متاح الآن للطلبات");
+                } else {
+                    alert("تم إيقاف التطبيق، السائق غير متاح للطلبات");
+                }
+            });
+        });
+
+        // Initialize the UI on page load
+        driverStatusRef.once("value").then(snapshot => {
+            const active = snapshot.val();
+            updateDriverStatusUI(active);
+        });
+    </script>
+</body>
+</html>
